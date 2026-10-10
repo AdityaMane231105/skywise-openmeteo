@@ -54,7 +54,7 @@ If PowerShell virtual-environment activation is blocked, the direct `.venv\Scrip
 1. Push this project to a GitHub repository. `.env` and `.venv` are excluded by `.gitignore`; never commit API keys.
 2. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey).
 3. In Render, choose **New → Blueprint**, connect the GitHub repository, and deploy the included `render.yaml`.
-4. When prompted, enter the Gemini key as `GEMINI_API_KEY`. If it is not prompted, add it under the service's **Environment** settings. Keep `AI_PROVIDER=gemini` and `GEMINI_MODEL=gemini-2.5-flash`.
+4. When prompted, enter the Gemini key as `GEMINI_API_KEY`. If it is not prompted, add it under the service's **Environment** settings. Keep `AI_PROVIDER=gemini` and `GEMINI_MODEL=gemini-2.5-flash-lite`.
 5. Wait for the Render health check to pass, then open the public `onrender.com` URL. Test city search, the forecast, and AI advice there.
 
 The Render service uses a production WSGI server and Gemini for public AI requests. The local Ollama model stays on your computer and is used for local development only. Gemini availability, quotas, and charges depend on the current Google AI plan and usage limits. Render's free web services may sleep while idle and can take a little longer on the first request.
