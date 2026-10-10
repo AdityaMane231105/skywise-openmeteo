@@ -61,8 +61,7 @@ If PowerShell virtual-environment activation is blocked, the direct `.venv\Scrip
 The Render service uses a production WSGI server and Ollama Cloud for public AI requests. The local `llama3.2` model stays on your computer for local development; Render cannot access your PC's `127.0.0.1` Ollama server. Keep the Ollama API key private and enter it only in Render's secret environment setting. Render's free web services may sleep while idle and can take a little longer on the first request.
 
 ## Weather source
-Weather and forecast data are retrieved from [Open-Meteo](https://open-meteo.com/). City names are resolved through the Open-Meteo geocoding API. Forecasts are model-based and may differ from exact local conditions; check official local alerts for safety-critical decisions.
-Current weather and forecast are fetched together and cached on the server for ten minutes, reducing duplicate requests and easing upstream rate limits.
+Weather and forecast data are retrieved from [Open-Meteo](https://open-meteo.com/). City names are resolved through the Open-Meteo geocoding API. If Open-Meteo rate-limits a forecast request, SkyWise falls back to the global [MET Norway Locationforecast API](https://api.met.no/weatherapi/locationforecast/2.0/documentation). Current weather and forecast are fetched together and cached on the server for ten minutes, reducing duplicate requests and easing upstream rate limits. Forecasts are model-based and may differ from exact local conditions; check official local alerts for safety-critical decisions.
 
 ## Notes
 - Weather search works without any API key.

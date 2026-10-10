@@ -54,7 +54,8 @@ function renderCurrent(data) {
   document.getElementById("humidity").textContent = `${data.humidity}%`;
   document.getElementById("wind").textContent = `${data.wind_speed} m/s`;
   document.getElementById("pressure").textContent = `${data.pressure} hPa`;
-  document.getElementById("visibility").textContent = `${data.visibility} km`;
+  document.getElementById("visibility").textContent =
+    data.visibility == null ? "—" : `${data.visibility} km`;
   const icon = document.getElementById("current-icon");
   icon.src = iconURL(data.icon);
   icon.alt = data.condition;
@@ -93,7 +94,7 @@ function renderForecast(days) {
     temps.append(high, low);
     const rain = document.createElement("div");
     rain.className = "rain-chance";
-    rain.textContent = `☂ ${day.pop}% chance`;
+    rain.textContent = day.pop == null ? "☂ Precipitation chance unavailable" : `☂ ${day.pop}% chance`;
     card.append(title, date, icon, condition, temps, rain);
     forecastGrid.append(card);
   });

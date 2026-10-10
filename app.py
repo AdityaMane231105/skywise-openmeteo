@@ -2,8 +2,10 @@ import json
 import os
 import threading
 import time
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
@@ -24,6 +26,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+METNO_FORECAST_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
+METNO_USER_AGENT = "SkyWiseWeather/1.0 (https://github.com/AdityaMane231105/skywise-openmeteo)"
 REQUEST_TIMEOUT = 15
 PORT = int(os.getenv("PORT", "5001"))
 WEATHER_CACHE_TTL = 600
@@ -35,10 +39,14 @@ _weather_cache_lock = threading.Lock()
 class WeatherAPIError(Exception):
     """A safe, user-displayable weather API error."""
 
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
-def request_json(url, params):
+
+def request_json(url, params, headers=None):
     try:
-        response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        response = requests.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.json()
     except requests.Timeout as exc:
@@ -54,7 +62,7 @@ def request_json(url, params):
             message = "The weather service is receiving too many requests. Wait a moment and try again."
         else:
             message = "The weather service request failed. Please try again shortly."
-        raise WeatherAPIError(message) from exc
+        raise WeatherAPIError(message, status_code=status_code) from exc
     except (requests.RequestException, ValueError) as exc:
         raise WeatherAPIError("Could not retrieve weather data. Check your internet connection and try again.") from exc
 
@@ -70,6 +78,112 @@ def find_city(city):
     if not results:
         raise WeatherAPIError("City not found. Check the spelling or include the country name.")
     return results[0]
+
+
+def metno_weather_code(symbol_code):
+    symbol = symbol_code.split("_", 1)[0]
+    return {
+        "clearsky": 0,
+        "fair": 1,
+        "partlycloudy": 2,
+        "cloudy": 3,
+        "fog": 45,
+        "lightrain": 61,
+        "rain": 63,
+        "heavyrain": 65,
+        "lightsleet": 66,
+        "sleet": 66,
+        "heavysleet": 67,
+        "lightsnow": 71,
+        "snow": 73,
+        "heavysnow": 75,
+        "lightrainshowers": 80,
+        "rainshowers": 81,
+        "heavyrainshowers": 82,
+        "lightsnowshowers": 85,
+        "snowshowers": 85,
+        "heavysnowshowers": 86,
+        "lightrainandthunder": 95,
+        "rainandthunder": 95,
+        "heavyrainandthunder": 96,
+        "snowandthunder": 96,
+        "sleetandthunder": 96,
+        "thunderstorm": 95,
+    }.get(symbol, 3)
+
+
+def normalise_metno(place, data):
+    entries = data.get("properties", {}).get("timeseries", [])
+    if not entries:
+        raise WeatherAPIError("The alternate weather service returned no forecast data.")
+
+    try:
+        location_timezone = ZoneInfo(place.get("timezone") or "UTC")
+    except KeyError:
+        location_timezone = timezone.utc
+
+    now = datetime.now(timezone.utc)
+    parsed_entries = [
+        (
+            datetime.fromisoformat(entry["time"].replace("Z", "+00:00")),
+            entry.get("data", {}),
+        )
+        for entry in entries
+    ]
+    past_entries = [entry for entry in parsed_entries if entry[0] <= now]
+    current_time, current_data = past_entries[-1] if past_entries else parsed_entries[0]
+    current_details = current_data.get("instant", {}).get("details", {})
+    current_symbol = (
+        current_data.get("next_1_hours", {}).get("summary", {}).get("symbol_code")
+        or current_data.get("next_6_hours", {}).get("summary", {}).get("symbol_code")
+        or "cloudy_day"
+    )
+    current_code = metno_weather_code(current_symbol)
+    current_temperature = float(current_details.get("air_temperature", 0))
+    current = {
+        "temperature_2m": current_temperature,
+        "relative_humidity_2m": int(round(float(current_details.get("relative_humidity", 0)))),
+        "apparent_temperature": current_temperature,
+        "is_day": int(current_symbol.endswith("_day")),
+        "weather_code": current_code,
+        "wind_speed_10m": round(float(current_details.get("wind_speed", 0)) * 3.6, 1),
+        "pressure_msl": float(current_details.get("air_pressure_at_sea_level", 0)),
+    }
+
+    daily_entries = {}
+    for entry_time, entry_data in parsed_entries:
+        local_date = entry_time.astimezone(location_timezone).date()
+        if local_date < now.astimezone(location_timezone).date():
+            continue
+        details = entry_data.get("instant", {}).get("details", {})
+        temperature = details.get("air_temperature")
+        if temperature is None:
+            continue
+        day = daily_entries.setdefault(local_date, {"temperatures": [], "codes": []})
+        day["temperatures"].append(float(temperature))
+        symbol = (
+            entry_data.get("next_6_hours", {}).get("summary", {}).get("symbol_code")
+            or entry_data.get("next_1_hours", {}).get("summary", {}).get("symbol_code")
+            or "cloudy_day"
+        )
+        day["codes"].append(metno_weather_code(symbol))
+
+    forecast_dates = sorted(daily_entries)[:5]
+    daily = {
+        "time": [day.isoformat() for day in forecast_dates],
+        "weather_code": [
+            Counter(daily_entries[day]["codes"]).most_common(1)[0][0]
+            for day in forecast_dates
+        ],
+        "temperature_2m_max": [
+            max(daily_entries[day]["temperatures"]) for day in forecast_dates
+        ],
+        "temperature_2m_min": [
+            min(daily_entries[day]["temperatures"]) for day in forecast_dates
+        ],
+        "precipitation_probability_max": [None] * len(forecast_dates),
+    }
+    return {"current": current, "daily": daily}
 
 
 def weather_description(code, is_day=True):
@@ -115,18 +229,29 @@ def fetch_for_city(city):
             return cached[1], cached[2]
 
         place = find_city(city)
-        data = request_json(FORECAST_URL, {
-            "latitude": place["latitude"],
-            "longitude": place["longitude"],
-            "current": (
-                "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,"
-                "precipitation,weather_code,pressure_msl,visibility,wind_speed_10m"
-            ),
-            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-            "timezone": "auto",
-            "forecast_days": 7,
-            "wind_speed_unit": "ms",
-        })
+        try:
+            data = request_json(FORECAST_URL, {
+                "latitude": place["latitude"],
+                "longitude": place["longitude"],
+                "current": (
+                    "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,"
+                    "precipitation,weather_code,pressure_msl,visibility,wind_speed_10m"
+                ),
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+                "timezone": "auto",
+                "forecast_days": 7,
+                "wind_speed_unit": "ms",
+            })
+        except WeatherAPIError as exc:
+            if exc.status_code != 429:
+                raise
+            app.logger.warning("Open-Meteo forecast was rate-limited; using MET Norway fallback")
+            fallback_data = request_json(
+                METNO_FORECAST_URL,
+                {"lat": place["latitude"], "lon": place["longitude"]},
+                headers={"User-Agent": METNO_USER_AGENT},
+            )
+            data = normalise_metno(place, fallback_data)
 
         expired = [
             key for key, entry in _weather_cache.items()
@@ -144,6 +269,7 @@ def fetch_for_city(city):
 def normalise_current(place, data):
     current = data.get("current") or {}
     code = int(current.get("weather_code", -1))
+    visibility = current.get("visibility")
     return {
         "city": place.get("name", "Unknown location"),
         "country": place.get("country_code", ""),
@@ -154,7 +280,7 @@ def normalise_current(place, data):
         "humidity": int(current.get("relative_humidity_2m", 0)),
         "wind_speed": round(float(current.get("wind_speed_10m", 0)), 1),
         "pressure": int(round(float(current.get("pressure_msl", 0)))),
-        "visibility": round(float(current.get("visibility", 0)) / 1000, 1),
+        "visibility": round(float(visibility) / 1000, 1) if visibility is not None else None,
         "updated_at": datetime.now().isoformat(timespec="minutes"),
     }
 
@@ -167,6 +293,7 @@ def normalise_forecast(data):
         code = int(daily.get("weather_code", [])[index])
         date = datetime.strptime(date_key, "%Y-%m-%d")
         rain_values = daily.get("precipitation_probability_max", [])
+        rain_probability = rain_values[index] if index < len(rain_values) else None
         days.append({
             "date": date_key,
             "day": date.strftime("%a"),
@@ -175,7 +302,7 @@ def normalise_forecast(data):
             "max": round(float(daily.get("temperature_2m_max", [0])[index])),
             "condition": weather_description(code),
             "icon": weather_icon(code),
-            "pop": int(rain_values[index] or 0) if index < len(rain_values) else 0,
+            "pop": int(rain_probability) if rain_probability is not None else None,
         })
     return days
 
