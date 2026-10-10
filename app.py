@@ -1,5 +1,7 @@
 import json
 import os
+import threading
+import time
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -24,6 +26,10 @@ GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 REQUEST_TIMEOUT = 15
 PORT = int(os.getenv("PORT", "5001"))
+WEATHER_CACHE_TTL = 600
+WEATHER_CACHE_MAX_ENTRIES = 128
+_weather_cache = {}
+_weather_cache_lock = threading.Lock()
 
 
 class WeatherAPIError(Exception):
@@ -38,7 +44,13 @@ def request_json(url, params):
     except requests.Timeout as exc:
         raise WeatherAPIError("The weather service took too long to respond. Please try again.") from exc
     except requests.HTTPError as exc:
-        if exc.response is not None and exc.response.status_code == 429:
+        status_code = exc.response.status_code if exc.response is not None else None
+        app.logger.warning(
+            "Weather provider %s returned HTTP %s",
+            urlsplit(url).hostname,
+            status_code,
+        )
+        if status_code == 429:
             message = "The weather service is receiving too many requests. Wait a moment and try again."
         else:
             message = "The weather service request failed. Please try again shortly."
@@ -95,20 +107,38 @@ def weather_icon(code, is_day=True):
 
 
 def fetch_for_city(city):
-    place = find_city(city)
-    data = request_json(FORECAST_URL, {
-        "latitude": place["latitude"],
-        "longitude": place["longitude"],
-        "current": (
-            "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,"
-            "precipitation,weather_code,pressure_msl,visibility,wind_speed_10m"
-        ),
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-        "timezone": "auto",
-        "forecast_days": 7,
-        "wind_speed_unit": "ms",
-    })
-    return place, data
+    cache_key = city.casefold()
+    now = time.monotonic()
+    with _weather_cache_lock:
+        cached = _weather_cache.get(cache_key)
+        if cached and cached[0] > now:
+            return cached[1], cached[2]
+
+        place = find_city(city)
+        data = request_json(FORECAST_URL, {
+            "latitude": place["latitude"],
+            "longitude": place["longitude"],
+            "current": (
+                "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,"
+                "precipitation,weather_code,pressure_msl,visibility,wind_speed_10m"
+            ),
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+            "timezone": "auto",
+            "forecast_days": 7,
+            "wind_speed_unit": "ms",
+        })
+
+        expired = [
+            key for key, entry in _weather_cache.items()
+            if entry[0] <= now
+        ]
+        for key in expired:
+            del _weather_cache[key]
+        if len(_weather_cache) >= WEATHER_CACHE_MAX_ENTRIES:
+            oldest_key = min(_weather_cache, key=lambda key: _weather_cache[key][0])
+            del _weather_cache[oldest_key]
+        _weather_cache[cache_key] = (time.monotonic() + WEATHER_CACHE_TTL, place, data)
+        return place, data
 
 
 def normalise_current(place, data):
@@ -169,7 +199,9 @@ def current_weather():
         return jsonify(error="City name is too long."), 400
     try:
         place, data = fetch_for_city(city)
-        return jsonify(normalise_current(place, data))
+        current = normalise_current(place, data)
+        current["days"] = normalise_forecast(data)
+        return jsonify(current)
     except WeatherAPIError as exc:
         return jsonify(error=str(exc)), 502
 

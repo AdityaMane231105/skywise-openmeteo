@@ -6,6 +6,7 @@ SkyWise is a responsive Flask weather dashboard. It uses Open-Meteo for current 
 - City search and quick-search buttons
 - Current temperature, feels-like temperature, condition, humidity, wind, pressure and visibility
 - Five-day outlook with high/low temperatures and precipitation probability
+- Shared current-weather and forecast requests with a short server-side cache to reduce upstream API calls
 - Ollama-powered weather Q&A, with local Ollama for development and Ollama Cloud for deployment
 - Responsive dark dashboard
 
@@ -61,6 +62,7 @@ The Render service uses a production WSGI server and Ollama Cloud for public AI 
 
 ## Weather source
 Weather and forecast data are retrieved from [Open-Meteo](https://open-meteo.com/). City names are resolved through the Open-Meteo geocoding API. Forecasts are model-based and may differ from exact local conditions; check official local alerts for safety-critical decisions.
+Current weather and forecast are fetched together and cached on the server for ten minutes, reducing duplicate requests and easing upstream rate limits.
 
 ## Notes
 - Weather search works without any API key.

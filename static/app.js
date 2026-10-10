@@ -110,12 +110,9 @@ async function searchCity(city) {
   aiAnswer.textContent = "";
   try {
     const encoded = encodeURIComponent(city.trim());
-    const [weather, forecast] = await Promise.all([
-      getJSON(`/api/weather?city=${encoded}`),
-      getJSON(`/api/forecast?city=${encoded}`)
-    ]);
+    const weather = await getJSON(`/api/weather?city=${encoded}`);
     renderCurrent(weather);
-    renderForecast(forecast.days);
+    renderForecast(weather.days);
     weatherSection.classList.remove("hidden");
     setStatus("");
     weatherSection.scrollIntoView({behavior:"smooth", block:"start"});
