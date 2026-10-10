@@ -6,7 +6,7 @@ SkyWise is a responsive Flask weather dashboard. It uses Open-Meteo for current 
 - City search and quick-search buttons
 - Current temperature, feels-like temperature, condition, humidity, wind, pressure and visibility
 - Five-day outlook with high/low temperatures and precipitation probability
-- Local Ollama-powered weather Q&A, with optional Gemini and OpenAI support
+- Ollama-powered weather Q&A, with local Ollama for development and Ollama Cloud for deployment
 - Responsive dark dashboard
 
 ## Requirements
@@ -52,12 +52,12 @@ If PowerShell virtual-environment activation is blocked, the direct `.venv\Scrip
 
 ## Deploy to Render
 1. Push this project to a GitHub repository. `.env` and `.venv` are excluded by `.gitignore`; never commit API keys.
-2. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey).
+2. Create an Ollama Cloud API key in [Ollama key settings](https://ollama.com/settings/keys). Check Ollama's current plan and usage limits before using its cloud API.
 3. In Render, choose **New → Blueprint**, connect the GitHub repository, and deploy the included `render.yaml`.
-4. When prompted, enter the Gemini key as `GEMINI_API_KEY`. If it is not prompted, add it under the service's **Environment** settings. Keep `AI_PROVIDER=gemini` and `GEMINI_MODEL=gemini-2.5-flash-lite`.
+4. When prompted, enter the key as `OLLAMA_API_KEY`. If it is not prompted, add it under the service's **Environment** settings. Keep the Blueprint's `AI_PROVIDER=ollama`, `OLLAMA_BASE_URL=https://ollama.com`, and `OLLAMA_MODEL=gemma4:31b` settings.
 5. Wait for the Render health check to pass, then open the public `onrender.com` URL. Test city search, the forecast, and AI advice there.
 
-The Render service uses a production WSGI server and Gemini for public AI requests. The local Ollama model stays on your computer and is used for local development only. Gemini availability, quotas, and charges depend on the current Google AI plan and usage limits. Render's free web services may sleep while idle and can take a little longer on the first request.
+The Render service uses a production WSGI server and Ollama Cloud for public AI requests. The local `llama3.2` model stays on your computer for local development; Render cannot access your PC's `127.0.0.1` Ollama server. Keep the Ollama API key private and enter it only in Render's secret environment setting. Render's free web services may sleep while idle and can take a little longer on the first request.
 
 ## Weather source
 Weather and forecast data are retrieved from [Open-Meteo](https://open-meteo.com/). City names are resolved through the Open-Meteo geocoding API. Forecasts are model-based and may differ from exact local conditions; check official local alerts for safety-critical decisions.
@@ -65,6 +65,7 @@ Weather and forecast data are retrieved from [Open-Meteo](https://open-meteo.com
 ## Notes
 - Weather search works without any API key.
 - Local Ollama AI runs on your computer and does not use OpenAI API credits. The model needs to be downloaded and Ollama must be running.
-- Public deployments use Gemini so website visitors do not need access to your local Ollama server.
+- Public deployments use Ollama Cloud; they do not use the Ollama model running on your computer.
+- Ollama Cloud requires an Ollama account/API key; its current plan and usage limits may apply.
 - OpenAI is available as an optional provider. It requires an API key and available API billing credits; ChatGPT subscriptions and OpenAI API billing are separate.
 - Do not commit `.env` or publish API keys.

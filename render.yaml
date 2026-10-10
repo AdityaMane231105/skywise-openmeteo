@@ -8,8 +8,10 @@ services:
     healthCheckPath: /health
     envVars:
       - key: AI_PROVIDER
-        value: gemini
-      - key: GEMINI_MODEL
-        value: gemini-2.5-flash-lite
-      - key: GEMINI_API_KEY
+        value: ollama
+      - key: OLLAMA_BASE_URL
+        value: https://ollama.com
+      - key: OLLAMA_MODEL
+        value: gemma4:31b
+      - key: OLLAMA_API_KEY
         sync: false

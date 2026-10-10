@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime
+from urllib.parse import urlsplit
 
 import requests
 from dotenv import load_dotenv
@@ -13,6 +14,7 @@ app = Flask(__name__)
 AI_PROVIDER = os.getenv("AI_PROVIDER", "ollama").strip().lower()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip().rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2").strip()
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -214,9 +216,19 @@ def ai_advice():
 
     try:
         if AI_PROVIDER == "ollama":
+            ollama_host = urlsplit(OLLAMA_BASE_URL).hostname
+            ollama_is_local = ollama_host in {"127.0.0.1", "localhost", "::1"}
+            if not ollama_is_local and not OLLAMA_API_KEY:
+                return jsonify(error="Ollama Cloud is not configured. Add OLLAMA_API_KEY in the hosting environment settings."), 503
+            headers = (
+                {"Authorization": f"Bearer {OLLAMA_API_KEY}"}
+                if OLLAMA_API_KEY
+                else {}
+            )
             try:
                 response = requests.post(
                     f"{OLLAMA_BASE_URL}/api/chat",
+                    headers=headers,
                     json={
                         "model": OLLAMA_MODEL,
                         "messages": [
@@ -231,20 +243,37 @@ def ai_advice():
                 response.raise_for_status()
                 result = response.json()
             except requests.ConnectionError as exc:
-                app.logger.warning("Could not connect to the local Ollama server: %s", exc)
-                return jsonify(error="Could not connect to Ollama. Make sure the Ollama app is running on this computer."), 503
+                app.logger.warning("Could not connect to the Ollama server: %s", exc)
+                if ollama_is_local:
+                    message = "Could not connect to Ollama. Make sure the Ollama app is running on this computer."
+                else:
+                    message = "Could not connect to Ollama Cloud. Please try again shortly."
+                return jsonify(error=message), 503
             except requests.Timeout as exc:
                 app.logger.warning("Ollama timed out while generating AI advice: %s", exc)
                 return jsonify(error="Ollama is taking too long to respond. Please try again."), 504
             except requests.HTTPError as exc:
-                if exc.response is not None and exc.response.status_code == 404:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code in (401, 403):
+                    message = "Ollama rejected the API key. Check OLLAMA_API_KEY in your hosting settings."
+                    app.logger.warning("Ollama rejected the configured API key (HTTP %s)", status_code)
+                elif status_code == 404 and ollama_is_local:
                     message = (
                         f"The Ollama model '{OLLAMA_MODEL}' was not found. "
                         f"Download it with: ollama pull {OLLAMA_MODEL}"
                     )
+                elif status_code == 404:
+                    message = f"The Ollama Cloud model '{OLLAMA_MODEL}' was not found or is unavailable to this account."
+                    app.logger.warning("Ollama Cloud model was not found or available: %s", OLLAMA_MODEL)
+                elif status_code == 429:
+                    message = "Ollama Cloud rate limit reached. Please wait and try again."
+                    app.logger.warning("Ollama Cloud rate limit reached")
                 else:
-                    app.logger.exception("Ollama returned an HTTP error")
-                    message = "Ollama could not generate an answer. Check that its local service is working."
+                    app.logger.exception("Ollama returned an HTTP error (HTTP %s)", status_code)
+                    if ollama_is_local:
+                        message = "Ollama could not generate an answer. Check that its local service is working."
+                    else:
+                        message = "Ollama Cloud could not generate an answer. Please try again shortly."
                 return jsonify(error=message), 502
             except (requests.RequestException, ValueError):
                 app.logger.exception("Could not read a valid response from Ollama")
